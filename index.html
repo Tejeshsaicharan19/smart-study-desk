@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Study Assistant | Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --glass-bg: rgba(255, 255, 255, 0.65);
+      --glass-border: rgba(15, 23, 42, 0.10);
+      --accent-cyan: #22d3ee;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: radial-gradient(1200px 600px at 20% 10%, rgba(34, 211, 238, 0.18), transparent 60%),
+                  radial-gradient(900px 500px at 80% 20%, rgba(16, 185, 129, 0.16), transparent 55%),
+                  linear-gradient(135deg, #f8fafc 0%, #eef2ff 40%, #f1f5f9 100%);
+      min-height: 100vh;
+      color: #0f172a;
+      overflow-x: hidden;
+    }
+    .glass {
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.60);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 12px;
+      transition: all 0.3s ease;
+    }
+    .glass-card:hover {
+      border-color: rgba(34, 211, 238, 0.2);
+      box-shadow: 0 0 24px rgba(34, 211, 238, 0.08);
+    }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .status-good { color: var(--accent-emerald); }
+    .status-warning { color: var(--accent-rose); }
+    .gauge-ring {
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.5s ease;
+    }
+    @keyframes pulse-warning {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .pulse-warning { animation: pulse-warning 1.5s ease-in-out infinite; }
+    @keyframes slide-in {
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .slide-in { animation: slide-in 0.4s ease-out; }
+    #distractionBanner { display: none; }
+    #distractionBanner.visible { display: flex; }
+  </style>
+</head>
+<body class="p-4 md:p-6 lg:p-8">
+  <!-- Distraction Alert Banner -->
+  <div id="distractionBanner" class="fixed top-0 left-0 right-0 z-50 glass p-4 mx-4 mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 slide-in items-center justify-center gap-3 shadow-lg shadow-rose-500/10">
+    <svg class="w-6 h-6 text-rose-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+    </svg>
+    <span class="text-rose-700 font-medium">Distraction detected! IR sensor detected movement. Stay focused.</span>
+  </div>
+
+  <div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-indigo-600 to-cyan-600 bg-clip-text text-transparent">
+          Smart Study Assistant
+        </h1>
+        <p class="text-slate-600 text-sm mt-1">Real-time monitoring dashboard</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <div id="connectionStatus" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/70 text-slate-700 border border-slate-200/60">
+          <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+          <span class="text-sm">Connecting…</span>
+        </div>
+        <div id="sessionTimer" class="font-mono text-lg px-4 py-2 glass rounded-lg">
+          <span id="timerDisplay">00:00:00</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Dashboard Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Left Column: Posture & Environment -->
+      <div class="lg:col-span-2 space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Posture Status -->
+          <div class="glass-card p-6">
+            <h3 class="text-sm font-medium text-slate-600 uppercase tracking-wider mb-4">Posture Status</h3>
+            <div id="postureIndicator" class="flex items-center gap-4">
+              <div id="postureDot" class="w-16 h-16 rounded-full bg-slate-200/70 flex items-center justify-center transition-all duration-300">
+                <span class="text-2xl">—</span>
+              </div>
+              <div>
+                <p id="postureLabel" class="text-xl font-semibold text-slate-700">Waiting...</p>
+                <p id="postureDistance" class="text-sm text-slate-600 font-mono">Distance: —</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lighting -->
+          <div class="glass-card p-6">
+            <h3 class="text-sm font-medium text-slate-600 uppercase tracking-wider mb-4">Lighting</h3>
+            <div id="lightingIndicator" class="flex items-center gap-4">
+              <div id="lightIcon" class="w-16 h-16 rounded-full bg-slate-200/70 flex items-center justify-center transition-all duration-300">
+                <svg id="lightOff" class="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                </svg>
+                <svg id="lightOn" class="w-8 h-8 text-amber-400 hidden" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 3a1 1 0 011 1v1a1 1 0 11-2 0V4a1 1 0 011-1zm0 14a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm8-6a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zm-14 0a1 1 0 01-1 1H4a1 1 0 110-2h1a1 1 0 011 1zm12.95-5.05a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zm-9.9 9.9a1 1 0 010 1.414l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 0zM16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                </svg>
+              </div>
+              <div>
+                <p id="lightLabel" class="text-xl font-semibold text-slate-700">OFF</p>
+                <p class="text-sm text-slate-600">Light / Servo</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Environment Gauges -->
+        <div class="glass-card p-6">
+          <h3 class="text-sm font-medium text-slate-600 uppercase tracking-wider mb-6">Environment</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="flex flex-col items-center">
+              <div class="relative w-32 h-32">
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(15,23,42,0.12)" stroke-width="8"/>
+                  <circle id="tempGauge" class="gauge-ring" cx="50" cy="50" r="42" fill="none" stroke="url(#tempGradient)" stroke-width="8" stroke-dasharray="264" stroke-dashoffset="264"/>
+                  <defs>
+                    <linearGradient id="tempGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#22d3ee"/>
+                      <stop offset="100%" stop-color="#f59e0b"/>
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <span id="tempValue" class="absolute inset-0 flex items-center justify-center text-2xl font-mono font-semibold text-cyan-700">—</span>
+              </div>
+              <p class="text-slate-700 mt-2 text-sm">Temperature (°C)</p>
+            </div>
+            <div class="flex flex-col items-center">
+              <div class="relative w-32 h-32">
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(15,23,42,0.12)" stroke-width="8"/>
+                  <circle id="humidityGauge" class="gauge-ring" cx="50" cy="50" r="42" fill="none" stroke="#22d3ee" stroke-width="8" stroke-dasharray="264" stroke-dashoffset="264"/>
+                </svg>
+                <span id="humidityValue" class="absolute inset-0 flex items-center justify-center text-2xl font-mono font-semibold text-cyan-700">—</span>
+              </div>
+              <p class="text-slate-700 mt-2 text-sm">Humidity (%)</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Chart -->
+      <div class="glass-card p-6">
+        <h3 class="text-sm font-medium text-slate-600 uppercase tracking-wider mb-4">Temperature Trend</h3>
+        <div class="h-64">
+          <canvas id="tempChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    // ============ State ============
+    let mqttClient = null;
+    let sessionStartTime = null;
+    let sessionTimerInterval = null;
+    let isFocused = true;
+    let lastPostureStatus = null;
+    let lastDistractionStatus = false;
+    const tempHistory = [];
+    const maxTempPoints = 30;
+    let tempChart = null;
+
+    // ============ MQTT Connection ============
+    const connectionStatus = document.getElementById('connectionStatus');
+    // As requested
+    const broker = ["broker.hivemq.com"];
+    const port = 1883; // (device port; browsers use WebSockets)
+    const topic = ["study/monitor/data"];
+
+    const MQTT_WS_PRIMARY = `wss://${broker[0]}:8884/mqtt`;
+    const MQTT_WS_FALLBACK = `ws://${broker[0]}:8000/mqtt`;
+
+    function connectMqttInternal() {
+      const clientId = 'study_dashboard_' + Math.random().toString(16).substring(2, 10);
+      const options = {
+        clientId,
+        clean: true,
+        reconnectPeriod: 2000,
+        connectTimeout: 8000,
+      };
+
+      let triedFallback = false;
+
+      function start(url) {
+        if (mqttClient) {
+          try { mqttClient.end(true); } catch (_) {}
+          mqttClient = null;
+        }
+
+        mqttClient = mqtt.connect(url, options);
+
+        mqttClient.on('connect', () => {
+          updateConnectionStatus(true);
+          mqttClient.subscribe(topic[0], { qos: 0 }, (err) => {
+            if (err) console.error('Subscribe error:', err);
+          });
+          startSessionTimer();
+        });
+
+        mqttClient.on('message', (t, payload) => {
+          handleMqttMessage(t, payload);
+        });
+
+        mqttClient.on('error', (err) => {
+          console.error('MQTT error:', err);
+          if (!triedFallback) {
+            triedFallback = true;
+            try { mqttClient.end(true); } catch (_) {}
+            updateConnectionStatus(false);
+            start(MQTT_WS_FALLBACK);
+          }
+        });
+
+        mqttClient.on('close', () => {
+          updateConnectionStatus(false);
+          stopSessionTimer();
+        });
+      }
+
+      start(MQTT_WS_PRIMARY);
+    }
+
+    function updateConnectionStatus(connected) {
+      const dot = connectionStatus.querySelector('span');
+      const text = connectionStatus.querySelector('span:last-child');
+      if (connected) {
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        text.textContent = 'Connected';
+        connectionStatus.classList.remove('bg-white/70', 'text-slate-700', 'border-slate-200/60');
+        connectionStatus.classList.add('bg-emerald-500/10', 'text-emerald-700', 'border-emerald-500/20');
+      } else {
+        dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+        text.textContent = 'Disconnected';
+        connectionStatus.classList.remove('bg-emerald-500/10', 'text-emerald-700', 'border-emerald-500/20');
+        connectionStatus.classList.add('bg-white/70', 'text-slate-700', 'border-slate-200/60');
+      }
+    }
+
+    // ============ Message Handling ============
+    function handleMqttMessage(topic, payload) {
+      let data;
+      try {
+        const str = payload.toString();
+        data = str.startsWith('{') ? JSON.parse(str) : parseRawMessage(topic, str);
+      } catch {
+        data = parseRawMessage(topic, payload.toString());
+      }
+      if (!data) return;
+
+      if (data.posture !== undefined || data.distance !== undefined) updatePosture(data);
+      if (data.temperature !== undefined || data.temp !== undefined) updateTemperature(data.temperature ?? data.temp);
+      if (data.humidity !== undefined || data.hum !== undefined) updateHumidity(data.humidity ?? data.hum);
+      if (data.light !== undefined || data.lighting !== undefined || data.servo !== undefined) updateLighting(data);
+      if (data.distraction !== undefined || data.ir !== undefined || data.movement !== undefined) updateDistraction(data);
+    }
+
+    function parseRawMessage(topic, str) {
+      const parsedKv = parseKeyValueMessage(str);
+      if (parsedKv) return parsedKv;
+
+      const lower = topic.toLowerCase() + str.toLowerCase();
+      if (lower.includes('posture') || lower.includes('distance')) {
+        const num = parseFloat(str.replace(/[^\d.-]/g, ''));
+        if (!isNaN(num)) return { distance: num, posture: num > 50 ? 'good' : 'too_close' };
+      }
+      if (lower.includes('temp') || lower.includes('temperature')) {
+        const num = parseFloat(str.replace(/[^\d.-]/g, ''));
+        if (!isNaN(num)) return { temperature: num };
+      }
+      if (lower.includes('humidity') || lower.includes('hum')) {
+        const num = parseFloat(str.replace(/[^\d.-]/g, ''));
+        if (!isNaN(num)) return { humidity: num };
+      }
+      if (lower.includes('light') || lower.includes('on') || lower.includes('off')) {
+        return { light: /on|1|true/i.test(str) };
+      }
+      if (lower.includes('distraction') || lower.includes('ir') || lower.includes('movement')) {
+        return { distraction: /true|1|yes|detected/i.test(str) };
+      }
+      return null;
+    }
+
+    function parseKeyValueMessage(str) {
+      if (typeof str !== 'string') return null;
+      if (!str.includes(':')) return null;
+
+      const out = {};
+      const parts = str.split(/[;,]/).map(p => p.trim()).filter(Boolean);
+      for (const part of parts) {
+        const idx = part.indexOf(':');
+        if (idx === -1) continue;
+        const key = part.slice(0, idx).trim().toLowerCase();
+        const rawVal = part.slice(idx + 1).trim();
+
+        if (key === 'distance' || key === 'dist') {
+          const n = parseFloat(rawVal);
+          if (!isNaN(n)) out.distance = n;
+        } else if (key === 'temp' || key === 'temperature') {
+          const n = parseFloat(rawVal);
+          if (!isNaN(n)) out.temperature = n;
+        } else if (key === 'humidity' || key === 'hum') {
+          const n = parseFloat(rawVal);
+          if (!isNaN(n)) out.humidity = n;
+        } else if (key === 'dark') {
+          // Your payload uses Dark:1/0. We map that to the lighting indicator.
+          out.dark = rawVal;
+          out.light = toBool(rawVal);
+        } else if (key === 'light' || key === 'lighting' || key === 'servo') {
+          out.light = toBool(rawVal);
+        } else if (key === 'distraction' || key === 'ir' || key === 'movement') {
+          out.distraction = toBool(rawVal);
+        }
+      }
+
+      return Object.keys(out).length ? out : null;
+    }
+
+    function toBool(v) {
+      if (typeof v === 'boolean') return v;
+      if (typeof v === 'number') return v !== 0;
+      if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (['1', 'true', 'on', 'yes', 'y', 'detected'].includes(s)) return true;
+        if (['0', 'false', 'off', 'no', 'n', ''].includes(s)) return false;
+      }
+      return Boolean(v);
+    }
+
+    // ============ Posture ============
+    function updatePosture(data) {
+      const distance = data.distance ?? (data.posture === 'good' ? 60 : 30);
+      const status = data.posture ?? (distance > 50 ? 'good' : 'too_close');
+      const isWarning = status === 'too_close' || (typeof distance === 'number' && distance <= 50);
+
+      const dot = document.getElementById('postureDot');
+      const label = document.getElementById('postureLabel');
+      const distEl = document.getElementById('postureDistance');
+
+      dot.className = 'w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 ' + (isWarning ? 'bg-rose-500/30 ring-2 ring-rose-500/50' : 'bg-emerald-500/30 ring-2 ring-emerald-500/50');
+      label.textContent = isWarning ? 'Too Close' : 'Good';
+      label.className = 'text-xl font-semibold ' + (isWarning ? 'text-rose-600' : 'text-emerald-600');
+      distEl.textContent = typeof distance === 'number' ? `Distance: ${distance} cm` : 'Distance: —';
+
+      if (lastPostureStatus !== null && lastPostureStatus !== isWarning) {
+        triggerAlert('posture', isWarning);
+      }
+      lastPostureStatus = isWarning;
+    }
+
+    // ============ Temperature & Humidity ============
+    function updateTemperature(val) {
+      const num = parseFloat(val);
+      if (isNaN(num)) return;
+      document.getElementById('tempValue').textContent = num.toFixed(1);
+      const pct = Math.min(100, Math.max(0, ((num - 15) / 35) * 100));
+      const circumference = 2 * Math.PI * 42;
+      document.getElementById('tempGauge').style.strokeDashoffset = circumference - (circumference * pct / 100);
+
+      tempHistory.push({ t: Date.now(), v: num });
+      if (tempHistory.length > maxTempPoints) tempHistory.shift();
+      updateTempChart();
+    }
+
+    function updateHumidity(val) {
+      const num = parseFloat(val);
+      if (isNaN(num)) return;
+      document.getElementById('humidityValue').textContent = num.toFixed(0);
+      const pct = Math.min(100, Math.max(0, num));
+      const circumference = 2 * Math.PI * 42;
+      document.getElementById('humidityGauge').style.strokeDashoffset = circumference - (circumference * pct / 100);
+    }
+
+    // ============ Lighting ============
+    function updateLighting(data) {
+      const on = toBool(data.light ?? data.lighting ?? data.servo ?? data.dark ?? false);
+      document.getElementById('lightOff').classList.toggle('hidden', on);
+      document.getElementById('lightOn').classList.toggle('hidden', !on);
+      document.getElementById('lightLabel').textContent = on ? 'ON' : 'OFF';
+      document.getElementById('lightLabel').className = 'text-xl font-semibold ' + (on ? 'text-amber-600' : 'text-slate-700');
+    }
+
+    // ============ Distraction ============
+    function updateDistraction(data) {
+      const detected = toBool(data.distraction ?? data.ir ?? data.movement ?? false);
+      const banner = document.getElementById('distractionBanner');
+      if (detected) {
+        banner.classList.add('visible');
+        if (!lastDistractionStatus) triggerAlert('distraction', true);
+      } else {
+        banner.classList.remove('visible');
+      }
+      lastDistractionStatus = detected;
+    }
+
+    // ============ Alerts ============
+    function requestNotificationPermission() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+
+    function triggerAlert(type, isWarning) {
+      if (!isWarning) return;
+      if (type === 'posture') {
+        showNotification('Posture Alert', 'You are too close to the screen. Please adjust your distance.');
+      } else if (type === 'distraction') {
+        showNotification('Distraction Alert', 'Movement detected. Stay focused!');
+      }
+      playAlertSound();
+    }
+
+    function showNotification(title, body) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(title, { body });
+      }
+    }
+
+    function playAlertSound() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 800;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.3);
+      } catch (_) {}
+    }
+
+    // ============ Session Timer ============
+    function startSessionTimer() {
+      sessionStartTime = Date.now();
+      sessionTimerInterval = setInterval(updateTimerDisplay, 1000);
+    }
+
+    function stopSessionTimer() {
+      clearInterval(sessionTimerInterval);
+      sessionTimerInterval = null;
+    }
+
+    function updateTimerDisplay() {
+      if (!sessionStartTime) return;
+      const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+      const h = Math.floor(elapsed / 3600);
+      const m = Math.floor((elapsed % 3600) / 60);
+      const s = elapsed % 60;
+      document.getElementById('timerDisplay').textContent =
+        String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    // ============ Chart ============
+    function updateTempChart() {
+      const ctx = document.getElementById('tempChart').getContext('2d');
+      if (!tempChart) {
+        tempChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [{
+              label: 'Temperature (°C)',
+              data: [],
+              borderColor: '#22d3ee',
+              backgroundColor: 'rgba(34, 211, 238, 0.1)',
+              fill: true,
+              tension: 0.4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: {
+                grid: { color: 'rgba(15, 23, 42, 0.08)' },
+                ticks: { color: '#475569', maxTicksLimit: 6 }
+              },
+              y: {
+                grid: { color: 'rgba(15, 23, 42, 0.08)' },
+                ticks: { color: '#475569' }
+              }
+            }
+          }
+        });
+      }
+      const labels = tempHistory.map((_, i) => {
+        const d = new Date(tempHistory[i].t);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      });
+      tempChart.data.labels = labels;
+      tempChart.data.datasets[0].data = tempHistory.map(h => h.v);
+      tempChart.update('none');
+    }
+
+    // ============ Init ============
+    requestNotificationPermission();
+    updateTimerDisplay();
+    connectMqttInternal();
+  </script>
+</body>
+</html>
