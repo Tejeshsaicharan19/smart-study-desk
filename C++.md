@@ -7,8 +7,8 @@
 #include <Servo.h>
 
 // --- WIFI ---
-char ssid[] = "TEJESH";
-char pass[] = "tejesh1234";
+char ssid[] = "WIFI USERNAME";
+char pass[] = "WIFI PASSWORD";
 
 // --- MQTT ---
 const char broker[] = "broker.hivemq.com";
